@@ -1,0 +1,88 @@
+const API_URL = import.meta.env.VITE_API_URL || '/api/chat.php'
+const STORAGE_KEY = 'orizon.conversation.v1'
+let inMemoryToken = null
+
+export class ChatError extends Error {
+  constructor(message, code = 'NETWORK') {
+    super(message)
+    this.code = code
+  }
+}
+
+function readToken() {
+  try {
+    return localStorage.getItem(STORAGE_KEY) || inMemoryToken
+  } catch {
+    return inMemoryToken
+  }
+}
+
+function saveToken(token) {
+  if (!/^[a-f0-9]{64}$/.test(token)) throw new ChatError('Il server ha restituito una conversazione non valida.', 'PROTOCOL')
+  inMemoryToken = token
+  try { localStorage.setItem(STORAGE_KEY, token) } catch { /* La chat corrente continua anche senza storage del browser. */ }
+}
+
+function clearToken() {
+  inMemoryToken = null
+  try { localStorage.removeItem(STORAGE_KEY) } catch { /* Storage non disponibile. */ }
+}
+
+async function request(action, payload = null, token = null) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 175000)
+  try {
+    const url = new URL(API_URL, window.location.origin)
+    const headers = { Accept: 'application/json' }
+    if (token) headers.Authorization = `Bearer ${token}`
+    if (payload) headers['Content-Type'] = 'application/json'
+    else url.searchParams.set('action', action)
+    const response = await fetch(url, {
+      method: payload ? 'POST' : 'GET',
+      headers,
+      body: payload ? JSON.stringify({ action, ...payload }) : undefined,
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+    if (!response.headers.get('content-type')?.includes('application/json')) {
+      throw new ChatError('Il backend PHP non risponde con JSON. Controlla che WAMP sia avviato e riavvia Vite dopo aver copiato vite.config.js.', 'BACKEND_URL')
+    }
+    const data = await response.json()
+    if (!response.ok || data.ok !== true) {
+      throw new ChatError(data.error?.message || 'Il server non ha completato la richiesta.', data.error?.code || 'SERVER')
+    }
+    if (!Array.isArray(data.messages) || data.messages.some((message) => !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string')) {
+      throw new ChatError('La risposta della chat non è valida. Riprova tra poco.', 'PROTOCOL')
+    }
+    return data
+  } catch (error) {
+    if (error instanceof ChatError) throw error
+    if (error.name === 'AbortError') {
+      throw new ChatError('La risposta sta impiegando troppo tempo. Puoi riprovare lo stesso invio o ricaricare per recuperare i messaggi salvati.', 'TIMEOUT')
+    }
+    throw new ChatError('Non riesco a raggiungere il server. Controlla WAMP e la connessione, poi riprova.', 'NETWORK')
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function createConversation() {
+  const data = await request('start', {})
+  saveToken(data.conversation_token)
+  return data
+}
+
+export async function restoreConversation() {
+  const token = readToken()
+  if (token) {
+    try { return await request('history', null, token) } catch (error) {
+      if (!['CONVERSATION_TOKEN', 'CONVERSATION_NOT_FOUND'].includes(error.code)) throw error
+      clearToken()
+    }
+  }
+  return createConversation()
+}
+
+export function sendChatMessage(message, requestId) {
+  return request('send', { message, request_id: requestId }, readToken())
+}
