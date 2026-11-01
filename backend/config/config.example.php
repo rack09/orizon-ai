@@ -6,8 +6,8 @@ declare(strict_types=1);
 return [
     'db_host' => '127.0.0.1',
     'db_port' => 3306,
-    'db_name' => 'orizon_ai',
-    'db_user' => 'root',
+    'db_name' => '',
+    'db_user' => '',
     'db_password' => '',
     'gemini_api_key' => '',
     'gemini_model' => 'gemini-3.5-flash-lite',
