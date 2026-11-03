@@ -11,6 +11,7 @@ use Orizon\ConversationRepository;
 use Orizon\EcoFreightClient;
 use Orizon\GeminiClient;
 use Orizon\HttpTransport;
+use Orizon\Limits;
 
 final class FixtureTransport implements HttpTransport
 {
@@ -102,8 +103,64 @@ $tests++;
 [$agent, $http] = fixtureAgent([['service' => 'googleapis.com', 'status' => 429, 'body' => []]]);
 expectError(static fn () => $agent->respond([], 'Ciao'), 'GEMINI_QUOTA');
 expectError(static fn () => ConversationRepository::validateMessage('   ', str_repeat('a', 32)), 'MESSAGE_INVALID');
-expectError(static fn () => ConversationRepository::validateMessage(str_repeat('é', 1201), str_repeat('a', 32)), 'MESSAGE_INVALID');
+expectError(static fn () => ConversationRepository::validateMessage(str_repeat('é', Limits::MAX_MESSAGE_CHARACTERS + 1), str_repeat('a', 32)), 'MESSAGE_INVALID');
 expectError(static fn () => ConversationRepository::validateMessage('Ciao', 'bad'), 'REQUEST_ID');
+$tests++;
+
+ConversationRepository::validateMessage(str_repeat('é', Limits::MAX_MESSAGE_CHARACTERS), str_repeat('a', 32));
+check(Limits::publicValues()['message_characters'] === Limits::MAX_MESSAGE_CHARACTERS, 'Limite pubblico condiviso con il frontend');
+$tests++;
+
+$step = toolStep($trip);
+$call = $step['body']['steps'][1];
+$step['body']['steps'] = array_fill(0, Limits::MAX_TOOL_CALLS_PER_RESPONSE + 1, $call);
+[$agent, $http] = fixtureAgent([$step]);
+expectError(static fn () => $agent->respond([], 'Troppi calcoli insieme'), 'TOOL_CALL_LIMIT');
+check(count($http->requests) === 1, 'Blocco prima di qualunque chiamata EcoFreight');
+$tests++;
+
+$step = toolStep($trip);
+$step['body']['steps'] = [];
+for ($i = 0; $i <= Limits::MAX_CALCULATIONS_PER_MESSAGE; $i++) {
+    $step['body']['steps'][] = array_replace($call, ['id' => 'budget_' . $i]);
+}
+$queue = [$step];
+for ($i = 0; $i < Limits::MAX_CALCULATIONS_PER_MESSAGE; $i++) $queue[] = freightResponse();
+$queue[] = modelText('Ecco le stime disponibili.');
+[$agent, $http] = fixtureAgent($queue);
+$answer = $agent->respond([], 'Più tratte');
+check(count($answer['calculations']) === Limits::MAX_CALCULATIONS_PER_MESSAGE, 'Budget del calcolatore rispettato');
+check(end($answer['tool_calls'])['result']['error']['code'] === 'TOOL_BUDGET', 'Chiamata eccedente respinta');
+$tests++;
+
+$queue = [];
+for ($i = 0; $i < Limits::MAX_MODEL_ROUNDS; $i++) {
+    $queue[] = toolStep($trip);
+    $queue[] = freightResponse();
+}
+[$agent, $http] = fixtureAgent($queue);
+$answer = $agent->respond([], 'Continua a richiedere il tool');
+check($answer['response_kind'] === 'fallback' && count($http->requests) === Limits::MAX_MODEL_ROUNDS * 2, 'Numero di round limitato con risultato preservato');
+$tests++;
+
+$promptPath = tempnam(sys_get_temp_dir(), 'orizon-prompt-');
+try {
+    file_put_contents($promptPath, 'Prima versione del prompt.');
+    $http = new FixtureTransport([modelText('Uno'), modelText('Due'), modelText('Tre')]);
+    $client = new GeminiClient($http, 'fixture-key', 'fixture-model', $promptPath);
+    $client->next([]);
+    file_put_contents($promptPath, 'Seconda versione del prompt.');
+    $client->next([]);
+    check($http->requests[1]['payload']['system_instruction'] === 'Prima versione del prompt.', 'Prompt letto una volta per istanza');
+    (new GeminiClient($http, 'fixture-key', 'fixture-model', $promptPath))->next([]);
+    check($http->requests[2]['payload']['system_instruction'] === 'Seconda versione del prompt.', 'Nuova istanza carica il prompt aggiornato');
+    $tests++;
+    file_put_contents($promptPath, '');
+    expectError(static fn () => new GeminiClient($http, 'fixture-key', 'fixture-model', $promptPath), 'SYSTEM_PROMPT_MISSING');
+} finally {
+    unlink($promptPath);
+}
+expectError(static fn () => new GeminiClient(new FixtureTransport([]), 'fixture-key', 'fixture-model', $promptPath), 'SYSTEM_PROMPT_MISSING');
 $tests++;
 
 echo 'PASS: ' . $tests . ' scenari unitari con trasporto simulato, nessuna chiamata reale.' . PHP_EOL;

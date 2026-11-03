@@ -14,5 +14,16 @@ npm.cmd ci
 npm.cmd run dev
 ```
 
+Per eseguire i test automatici e verificare la build:
+
+```powershell
+npm.cmd run test:run
+npm.cmd run build
+```
+
+`useChat` gestisce lo stato; `ChatPanel`, `ChatMessage`, `CalculationCard`,
+`Composer` ed `ExampleCards` compongono l'interfaccia. Le icone SVG sono separate.
+Il benvenuto e il limite dei messaggi provengono dal backend.
+
 Il backend PHP e MySQL devono essere configurati prima di utilizzare la chat.
 Le credenziali e le chiavi API restano nel backend.

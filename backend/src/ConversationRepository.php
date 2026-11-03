@@ -54,7 +54,7 @@ final class ConversationRepository
                 $this->pdo->commit();
                 return ['ok' => true, 'messages' => $this->messages($id), 'replayed' => true];
             }
-            if ((int) $conversation['turn_count'] >= $this->maxTurns || strlen($conversation['model_history']) > 1000000) {
+            if ((int) $conversation['turn_count'] >= $this->maxTurns || strlen($conversation['model_history']) > Limits::MAX_HISTORY_BYTES) {
                 throw new ApiException(422, 'CONVERSATION_LIMIT', 'Questa conversazione ha raggiunto il limite. Premi Nuova chat per continuare.');
             }
             $history = json_decode($conversation['model_history'], true, 64, JSON_THROW_ON_ERROR);
@@ -95,8 +95,8 @@ final class ConversationRepository
     public static function validateMessage(string $message, string $requestId): void
     {
         $length = preg_match_all('/./us', $message);
-        if ($length === false || $length > 1200 || !preg_match('/\S/u', $message)) {
-            throw new ApiException(422, 'MESSAGE_INVALID', 'Scrivi un messaggio non vuoto di massimo 1200 caratteri.');
+        if ($length === false || $length > Limits::MAX_MESSAGE_CHARACTERS || !preg_match('/\S/u', $message)) {
+            throw new ApiException(422, 'MESSAGE_INVALID', sprintf('Scrivi un messaggio non vuoto di massimo %d caratteri.', Limits::MAX_MESSAGE_CHARACTERS));
         }
         if (!preg_match('/^[a-zA-Z0-9_-]{16,64}$/D', $requestId)) {
             throw new ApiException(422, 'REQUEST_ID', 'L’identificativo della richiesta non è valido. Ricarica la pagina.');

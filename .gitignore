@@ -1,6 +1,8 @@
 # Configurazione privata: le copie locali restano sul computer e sul server.
+/backend/config/config.php
 /backend/config/auth.php
 ACCESSO_DOCENTE_PRIVATO.txt
+Progetto_Agenti_AI_per_Sviluppo_di_Melvin_Rosales.pdf
 **/PRIVADO/
 **/PRIVATE/
 **/.env

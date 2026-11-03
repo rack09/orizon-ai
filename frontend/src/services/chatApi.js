@@ -1,5 +1,6 @@
 const API_URL = import.meta.env.VITE_API_URL || '/api/chat.php'
 const STORAGE_KEY = 'orizon.conversation.v1'
+export const REQUEST_TIMEOUT_MS = 175000
 let inMemoryToken = null
 
 export class ChatError extends Error {
@@ -10,15 +11,23 @@ export class ChatError extends Error {
 }
 
 function readToken() {
+  let token = inMemoryToken
   try {
-    return localStorage.getItem(STORAGE_KEY) || inMemoryToken
-  } catch {
-    return inMemoryToken
+    token = localStorage.getItem(STORAGE_KEY) || inMemoryToken
+  } catch { /* Usiamo la memoria se lo storage del browser non è disponibile. */ }
+  if (token !== null && !isToken(token)) {
+    clearToken()
+    return null
   }
+  return token
+}
+
+function isToken(token) {
+  return typeof token === 'string' && /^[a-f0-9]{64}$/.test(token)
 }
 
 function saveToken(token) {
-  if (!/^[a-f0-9]{64}$/.test(token)) throw new ChatError('Il server ha restituito una conversazione non valida.', 'PROTOCOL')
+  if (!isToken(token)) throw new ChatError('Il server ha restituito una conversazione non valida.', 'PROTOCOL')
   inMemoryToken = token
   try { localStorage.setItem(STORAGE_KEY, token) } catch { /* La chat corrente continua anche senza storage del browser. */ }
 }
@@ -30,7 +39,7 @@ function clearToken() {
 
 async function request(action, payload = null, token = null) {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 175000)
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
     const url = new URL(API_URL, window.location.origin)
     const headers = { Accept: 'application/json' }
@@ -47,11 +56,20 @@ async function request(action, payload = null, token = null) {
     if (!response.headers.get('content-type')?.includes('application/json')) {
       throw new ChatError('Il backend PHP non risponde con JSON. Controlla che WAMP sia avviato e riavvia Vite dopo aver copiato vite.config.js.', 'BACKEND_URL')
     }
-    const data = await response.json()
+    let data
+    try {
+      data = await response.json()
+    } catch {
+      throw new ChatError('Il server ha restituito JSON non valido. Riprova tra poco.', 'PROTOCOL')
+    }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      throw new ChatError('La risposta della chat non è valida. Riprova tra poco.', 'PROTOCOL')
+    }
     if (!response.ok || data.ok !== true) {
       throw new ChatError(data.error?.message || 'Il server non ha completato la richiesta.', data.error?.code || 'SERVER')
     }
-    if (!Array.isArray(data.messages) || data.messages.some((message) => !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string')) {
+    if (!Array.isArray(data.messages) || data.messages.some((message) => !message || !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string')
+      || !Number.isSafeInteger(data.limits?.message_characters) || data.limits.message_characters <= 0) {
       throw new ChatError('La risposta della chat non è valida. Riprova tra poco.', 'PROTOCOL')
     }
     return data
@@ -84,5 +102,7 @@ export async function restoreConversation() {
 }
 
 export function sendChatMessage(message, requestId) {
-  return request('send', { message, request_id: requestId }, readToken())
+  const token = readToken()
+  if (!token) return Promise.reject(new ChatError('La conversazione non è riconosciuta. Premi Nuova chat.', 'CONVERSATION_TOKEN'))
+  return request('send', { message, request_id: requestId }, token)
 }

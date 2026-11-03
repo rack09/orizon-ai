@@ -234,7 +234,14 @@ Nella demo, la radice pubblica punta a `backend/public`, mentre configurazioni e
 
 | Percorso | Contenuto |
 |---|---|
-| `frontend/src/App.vue` | Interfaccia della chat e schede dei risultati. |
+| `frontend/src/App.vue` | Layout della pagina e composizione dell'interfaccia. |
+| `frontend/src/composables/useChat.js` | Stato della chat, invii, ripristino e retry con lo stesso requestId. |
+| `frontend/src/components/ChatPanel.vue` | Conversazione, stato di caricamento e messaggi di errore. |
+| `frontend/src/components/ChatMessage.vue` | Presentazione di un messaggio ricevuto dal backend. |
+| `frontend/src/components/CalculationCard.vue` | Scheda dei risultati EcoFreight. |
+| `frontend/src/components/Composer.vue` | Campo del messaggio, contatore e invio. |
+| `frontend/src/components/ExampleCards.vue` | Tre esempi che compilano il campo senza inviarlo automaticamente. |
+| `frontend/src/components/icons/` | SVG separati in componenti di presentazione. |
 | `frontend/src/services/chatApi.js` | Richieste al backend e ripristino della conversazione. |
 | `frontend/src/style.css` | Stili dell'applicazione. |
 | `frontend/public/` | Logo e risorse statiche. |
@@ -245,6 +252,7 @@ Nella demo, la radice pubblica punta a `backend/public`, mentre configurazioni e
 | `backend/src/EcoFreightClient.php` | Client EcoFreight e normalizzazione dei risultati. |
 | `backend/src/ConversationRepository.php` | Persistenza MySQL e query preparate. |
 | `backend/src/Config.php` | Caricamento della configurazione. |
+| `backend/src/Limits.php` | Limiti tecnici con nomi espliciti e valori pubblici per il frontend. |
 | `backend/config/system-prompt.txt` | Istruzioni dell'assistente. |
 | `backend/database/schema.sql` | Schema del database. |
 | `backend/tests/run.php` | Test del backend. |
@@ -276,6 +284,23 @@ La suite verifica il ciclo agente/tool con provider simulati: gestione del conte
 
 Le integrazioni MySQL opzionali richiedono un database di test dedicato. Il funzionamento completo dei provider deve essere verificato nell'ambiente configurato.
 
+### Test del frontend e integrazione continua
+
+Dalla cartella `frontend`, dopo `npm.cmd ci`:
+
+```powershell
+npm.cmd run test:run
+npm.cmd run build
+```
+
+Vitest verifica la validazione e il ripristino dei token, gli errori HTTP e di rete, `AbortError`, risposte non JSON e JSON non valido, storage non disponibile, caricamento iniziale, retry senza duplicati, esempi e schede dei risultati. I provider e le richieste HTTP sono simulati: non servono chiavi API.
+
+Il workflow [Test e build](.github/workflows/ci.yml) esegue i test PHP su PHP 8.1 e 8.3, i test Vitest e la build Vue a ogni `push` e `pull_request`. Gli esiti sono disponibili nella scheda **Actions** del repository. La CI non chiama le API reali; i test MySQL rimangono opzionali e richiedono un database dedicato.
+
+Il frontend parte con una cronologia vuota e mostra il caricamento. Il messaggio di benvenuto proviene esclusivamente da `ConversationRepository::welcome()`, insieme agli altri messaggi del backend. Le risposte della chat includono `limits.message_characters`, usato dal composable e dal composer per applicare il limite del server.
+
+`GeminiClient` legge e verifica `system-prompt.txt` una volta nel costruttore. Un file mancante, illeggibile o vuoto produce `SYSTEM_PROMPT_MISSING`; i round successivi della stessa istanza riutilizzano il prompt già caricato.
+
 ### Prova manuale della chat
 
 1. Inviare: **«Vorrei stimare le emissioni per 20 kg di bagagli da Milano a Roma in treno.»**
@@ -295,7 +320,10 @@ Le integrazioni MySQL opzionali richiedono un database di test dedicato. Il funz
 | **Accesso al database** | Query preparate con PDO. |
 | **Conversazioni** | Token conservato come hash nel database. |
 | **Invii ripetuti** | Identificativi delle richieste per evitare di elaborare nuovamente lo stesso turno. |
-| **Limiti predefiniti** | 40 turni per conversazione, fino a 3 chiamate al calcolatore per messaggio e 60 operazioni di scrittura per IP ogni ora. |
+| **Quote configurabili** | `max_turns` (40) e `requests_per_hour` (60), modificabili tramite configurazione privata o variabili d'ambiente. |
+| **Limiti tecnici nominati** | `Limits.php`: messaggi fino a 1200 caratteri, corpo JSON fino a 8192 byte, 3 round del modello, 8 tool call per risposta e 3 calcoli EcoFreight per messaggio. |
+
+Le quote configurabili e i limiti tecnici sono distinti. Per cambiare un limite tecnico si aggiorna la costante corrispondente in `Limits.php`; il limite dei messaggi viene comunicato al browser dalle risposte dell'endpoint, senza duplicare il valore in JavaScript.
 
 Le stime dipendono dai dati e dalle assunzioni di EcoFreight. Disponibilità e quote dipendono anche dai provider. I limiti applicativi non costituiscono un budget globale di consumo: il progetto non implementa un tetto giornaliero globale per le API.
 

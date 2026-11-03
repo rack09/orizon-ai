@@ -14,7 +14,7 @@ final class Agent
         $toolCount = 0;
         $lastError = '';
 
-        for ($round = 0; $round < 3; $round++) {
+        for ($round = 0; $round < Limits::MAX_MODEL_ROUNDS; $round++) {
             try {
                 $interaction = $this->model->next($history);
             } catch (ApiException $error) {
@@ -39,13 +39,13 @@ final class Agent
                 }
                 return ['history' => $history, 'reply' => $text, 'calculations' => $calculations, 'tool_calls' => $records, 'response_kind' => 'model'];
             }
-            if (count($calls) > 8) {
+            if (count($calls) > Limits::MAX_TOOL_CALLS_PER_RESPONSE) {
                 throw new ApiException(502, 'TOOL_CALL_LIMIT', 'L’assistente ha richiesto troppi calcoli. Descrivi una tratta alla volta.');
             }
             foreach ($calls as $call) {
                 $id = $call['id'] ?? '';
                 $name = $call['name'] ?? '';
-                if (!is_string($id) || $id === '' || strlen($id) > 200 || !is_string($name) || strlen($name) > 100) {
+                if (!is_string($id) || $id === '' || strlen($id) > Limits::MAX_TOOL_CALL_ID_BYTES || !is_string($name) || strlen($name) > Limits::MAX_TOOL_NAME_BYTES) {
                     throw new ApiException(502, 'TOOL_PROTOCOL', 'L’assistente ha restituito una chiamata non valida. Riprova.');
                 }
                 $arguments = $call['arguments'] ?? [];
@@ -60,8 +60,8 @@ final class Agent
                     if ($name !== 'calcola_emissioni') {
                         throw new ApiException(422, 'TOOL_UNKNOWN', 'Questa funzione non è disponibile. Usa soltanto calcola_emissioni.');
                     }
-                    if (++$toolCount > 3) {
-                        throw new ApiException(422, 'TOOL_BUDGET', 'Sono consentiti al massimo tre calcoli per messaggio. Chiedi di separare le tratte.');
+                    if (++$toolCount > Limits::MAX_CALCULATIONS_PER_MESSAGE) {
+                        throw new ApiException(422, 'TOOL_BUDGET', sprintf('Sono consentiti al massimo %d calcoli per messaggio. Chiedi di separare le tratte.', Limits::MAX_CALCULATIONS_PER_MESSAGE));
                     }
                     $calculation = $this->emissions->calculate($arguments);
                     $raw = $calculation['raw'];

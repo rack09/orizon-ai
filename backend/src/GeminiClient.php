@@ -4,7 +4,17 @@ namespace Orizon;
 
 final class GeminiClient
 {
-    public function __construct(private HttpTransport $http, private string $apiKey, private string $model) {}
+    private string $systemInstruction;
+
+    public function __construct(private HttpTransport $http, private string $apiKey, private string $model, ?string $promptPath = null)
+    {
+        // Un'unica lettura per istanza, anche quando il tool richiede più round.
+        $prompt = @file_get_contents($promptPath ?? dirname(__DIR__) . '/config/system-prompt.txt');
+        if ($prompt === false || trim($prompt) === '') {
+            throw new ApiException(503, 'SYSTEM_PROMPT_MISSING', 'Le istruzioni dell’assistente non sono disponibili. Verifica backend/config/system-prompt.txt.');
+        }
+        $this->systemInstruction = $prompt;
+    }
 
     public function next(array $history): array
     {
@@ -14,7 +24,7 @@ final class GeminiClient
         $response = $this->http->post('https://generativelanguage.googleapis.com/v1beta/interactions', ['x-goog-api-key: ' . trim($this->apiKey)], [
             'model' => $this->model,
             'store' => false,
-            'system_instruction' => file_get_contents(dirname(__DIR__) . '/config/system-prompt.txt'),
+            'system_instruction' => $this->systemInstruction,
             'input' => $history,
             'tools' => [self::tool()],
             'generation_config' => ['max_output_tokens' => 2048, 'thinking_level' => 'low', 'thinking_summaries' => 'none'],

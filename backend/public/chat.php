@@ -14,9 +14,13 @@ use Orizon\ConversationRepository;
 use Orizon\CurlTransport;
 use Orizon\EcoFreightClient;
 use Orizon\GeminiClient;
+use Orizon\Limits;
 
 function respond(array $body, int $status = 200): void
 {
+    if (isset($body['messages'])) {
+        $body['limits'] = Limits::publicValues();
+    }
     http_response_code($status);
     echo json_encode($body, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT | JSON_INVALID_UTF8_SUBSTITUTE);
     exit;
@@ -55,8 +59,11 @@ try {
         if (strtolower(trim(explode(';', $_SERVER['CONTENT_TYPE'] ?? '')[0])) !== 'application/json') {
             throw new ApiException(415, 'CONTENT_TYPE', 'Invia il corpo della richiesta come application/json.');
         }
-        $raw = file_get_contents('php://input', false, null, 0, 8193);
-        if (strlen($raw) > 8192) {
+        $raw = file_get_contents('php://input', false, null, 0, Limits::MAX_REQUEST_BYTES + 1);
+        if ($raw === false) {
+            throw new ApiException(400, 'INVALID_BODY', 'Il corpo della richiesta non è leggibile.');
+        }
+        if (strlen($raw) > Limits::MAX_REQUEST_BYTES) {
             throw new ApiException(413, 'BODY_TOO_LARGE', 'Il messaggio è troppo lungo.');
         }
         try {
